@@ -1,117 +1,104 @@
 
 import streamlit as st
-import pandas as pd
+import pickle
+import numpy as np
 import re
 import nltk
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
+nltk.download("stopwords", quiet=True)
 from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
 
-nltk.download('stopwords', quiet=True)
-nltk.download('wordnet', quiet=True)
-nltk.download('omw-1.4', quiet=True)
+st.set_page_config(page_title="Sentiment Analyzer", page_icon="🧠", layout="centered")
 
-st.set_page_config(page_title="COVID Sentiment Analyzer", page_icon="🦠", layout="wide")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+html, body, [class*="css"] { font-family: 'DM Mono', monospace; background-color: #0d0d0d; color: #e8e0d0; }
+#MainMenu, footer, header { visibility: hidden; }
+.hero-title { font-family: 'DM Serif Display', serif; font-size: 3.2rem; line-height: 1.1; color: #f0e8d8; margin-bottom: 0.2rem; }
+.hero-sub { font-size: 0.78rem; letter-spacing: 0.18em; color: #6b6560; text-transform: uppercase; margin-bottom: 2.5rem; }
+textarea { background-color: #161616 !important; border: 1px solid #2a2a2a !important; border-radius: 4px !important; color: #e8e0d0 !important; font-size: 0.95rem !important; }
+textarea:focus { border-color: #c8a96e !important; }
+.stButton > button { background: #c8a96e; color: #0d0d0d; border: none; border-radius: 3px; font-size: 0.78rem; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; padding: 0.65rem 2rem; width: 100%; }
+.stButton > button:hover { background: #d4b87a; }
+.result-card { margin-top: 2rem; padding: 1.8rem 2rem; border-radius: 4px; border-left: 3px solid; background: #161616; }
+.result-label { font-family: 'DM Serif Display', serif; font-size: 2rem; margin-bottom: 0.3rem; }
+.result-meta { font-size: 0.75rem; color: #6b6560; letter-spacing: 0.1em; text-transform: uppercase; }
+</style>
+""", unsafe_allow_html=True)
 
-SENTIMENT_STYLE = {
-    "Extremely Positive": {"bg": "#d4edda", "color": "#155724", "emoji": "🌟"},
-    "Positive":           {"bg": "#d1ecf1", "color": "#0c5460", "emoji": "😊"},
-    "Neutral":            {"bg": "#fff3cd", "color": "#856404", "emoji": "😐"},
-    "Negative":           {"bg": "#f8d7da", "color": "#721c24", "emoji": "😟"},
-    "Extremely Negative": {"bg": "#f5c6cb", "color": "#491217", "emoji": "😡"},
-}
-
-def clean_text(text):
-    lemmatizer = WordNetLemmatizer()
-    stop_words = set(stopwords.words("english"))
-    text = str(text).lower()
-    text = re.sub(r"http\S+|www\S+", "", text)
-    text = re.sub(r"@\w+", "", text)
-    text = re.sub(r"#\w+", "", text)
-    text = re.sub(r"[^a-z\s]", "", text)
-    tokens = text.split()
-    tokens = [lemmatizer.lemmatize(t) for t in tokens if t not in stop_words]
-    return " ".join(tokens)
+st.markdown('<div class="hero-title">Sentiment<br><em>Analyzer</em></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-sub">COVID-19 Tweets · Logistic Regression · NLP</div>', unsafe_allow_html=True)
 
 @st.cache_resource
-def train_model():
-    df = pd.read_csv("Corona_NLP_train.csv", usecols=["OriginalTweet", "Sentiment"])
-    df["clean"] = df["OriginalTweet"].apply(clean_text)
-    vectorizer = TfidfVectorizer(max_features=10000, ngram_range=(1, 2))
-    X = vectorizer.fit_transform(df["clean"])
-    y = df["Sentiment"]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    model = LogisticRegression(max_iter=1000, C=5, solver="lbfgs", multi_class="multinomial")
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, output_dict=True)
-    cm = confusion_matrix(y_test, y_pred, labels=model.classes_)
-    return model, vectorizer, acc, report, cm, model.classes_, df
+def load_model():
+    try:
+        with open("model.pkl", "rb") as f:
+            model = pickle.load(f)
+        with open("vectorizer.pkl", "rb") as f:
+            vectorizer = pickle.load(f)
+        return model, vectorizer, None
+    except FileNotFoundError as e:
+        return None, None, str(e)
 
-st.markdown("## 🦠 COVID-19 Sentiment Analyzer")
-st.markdown("---")
+model, vectorizer, load_error = load_model()
 
-with st.spinner("Training model... please wait"):
-    model, vectorizer, acc, report, cm, classes, df = train_model()
+if load_error:
+    st.error(f"Model files not found: {load_error}")
+    st.stop()
 
-st.success(f"✅ Model ready! Accuracy: {acc*100:.2f}%")
+def clean_text(text):
+    text = re.sub(r"http\S+|www\S+", "", text)
+    text = re.sub(r"[^a-zA-Z\s]", "", text)
+    text = text.lower()
+    stop_words = set(stopwords.words("english"))
+    text = " ".join(w for w in text.split() if w not in stop_words)
+    return text
 
-tab1, tab2, tab3 = st.tabs(["🎯 Predict", "📊 Metrics", "☁️ Word Cloud"])
+def predict(text):
+    cleaned = clean_text(text)
+    features = vectorizer.transform([cleaned])
+    pred = model.predict(features)[0]
+    proba = model.predict_proba(features)[0]
+    confidence = float(np.max(proba))
+    return pred, round(confidence * 100, 1)
 
-with tab1:
-    st.markdown("### Type any sentence to predict its sentiment")
-    user_input = st.text_area("Enter text", placeholder="e.g. Vaccines are giving us hope!", height=120)
-    if st.button("🔍 Analyse"):
-        if user_input.strip():
-            cleaned = clean_text(user_input)
-            vec = vectorizer.transform([cleaned])
-            pred = model.predict(vec)[0]
-            proba = model.predict_proba(vec)[0]
-            style = SENTIMENT_STYLE.get(pred, {"bg":"#eee","color":"#333","emoji":"❓"})
-            st.markdown(f"""
-            <div style='background:{style["bg"]};color:{style["color"]};padding:1.5rem;
-            border-radius:12px;text-align:center;font-size:1.5rem;font-weight:700'>
-            {style["emoji"]} {pred}
-            </div>""", unsafe_allow_html=True)
-            st.markdown("#### Confidence")
-            prob_df = pd.DataFrame({"Sentiment": classes, "Probability": proba}).sort_values("Probability", ascending=False)
-            st.bar_chart(prob_df.set_index("Sentiment"))
-        else:
-            st.warning("Please enter some text!")
+user_input = st.text_area(
+    label="Text",
+    placeholder="Type or paste a tweet here...",
+    height=150,
+    label_visibility="collapsed"
+)
 
-with tab2:
-    st.markdown("### Model Metrics")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Accuracy", f"{acc*100:.2f}%")
-    col2.metric("Macro F1", f"{report['macro avg']['f1-score']*100:.2f}%")
-    col3.metric("Macro Precision", f"{report['macro avg']['precision']*100:.2f}%")
+if st.button("Analyze →"):
+    text = user_input.strip()
+    if not text:
+        st.error("Please enter some text before analyzing.")
+    else:
+        with st.spinner("Analyzing..."):
+            label, confidence = predict(text)
 
-    st.markdown("#### Confusion Matrix")
-    fig, ax = plt.subplots(figsize=(7, 5))
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
-    disp.plot(ax=ax, colorbar=False, cmap="Blues", xticks_rotation=30)
-    fig.tight_layout()
-    st.pyplot(fig)
+        color_map = {
+            "Extremely Positive": "#4CAF50",
+            "Positive": "#6abf7b",
+            "Neutral": "#c8a96e",
+            "Negative": "#bf6a6a",
+            "Extremely Negative": "#e53935"
+        }
+        emoji_map = {
+            "Extremely Positive": "⬆⬆",
+            "Positive": "＋",
+            "Neutral": "◦",
+            "Negative": "－",
+            "Extremely Negative": "⬇⬇"
+        }
+        color = color_map.get(label, "#c8a96e")
+        emoji = emoji_map.get(label, "◦")
 
-    st.markdown("#### Per-Class Report")
-    rows = [{"Sentiment": l, "Precision": f"{report[l]['precision']:.2f}",
-             "Recall": f"{report[l]['recall']:.2f}", "F1": f"{report[l]['f1-score']:.2f}"}
-            for l in classes if l in report]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.markdown(f"""
+        <div class="result-card" style="border-color:{color}">
+            <div class="result-label" style="color:{color}">{emoji} {label}</div>
+            <div class="result-meta">Confidence · {confidence}%</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-with tab3:
-    st.markdown("### Word Cloud by Sentiment")
-    selected = st.selectbox("Choose a sentiment", list(SENTIMENT_STYLE.keys()))
-    subset = df[df["Sentiment"] == selected]["clean"]
-    text = " ".join(subset.dropna().tolist())
-    wc = WordCloud(width=900, height=400, background_color="white", max_words=150).generate(text)
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.imshow(wc, interpolation="bilinear")
-    ax.axis("off")
-    st.pyplot(fig)
+st.markdown('<div style="font-size:0.72rem;color:#3d3a36;text-align:center;margin-top:3rem;">powered by your logistic regression model</div>', unsafe_allow_html=True)
