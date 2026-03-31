@@ -1,5 +1,7 @@
 streamlit
-scikit-learn
-numpy
 pandas
+numpy
+scikit-learn
 nltk
+matplotlib
+wordcloud
